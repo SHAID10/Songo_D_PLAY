@@ -286,5 +286,19 @@ function checkWinner() {
     }
 }
 
+
 // Initialisation au chargement du script
 renderBoard();
+
+// Sélection du bouton Reset
+const resetBtn = document.getElementById("resetBtn");
+resetBtn.onclick = () => {
+    // Réinitialisation de l'état du jeu
+    board = new Array(14).fill(5);  
+    scoreSouth = 0;
+    scoreNorth = 0;
+    currentPlayer = "South";
+    gameOver = false;
+    displayMessage("Partie réinitialisée !");
+    renderBoard();
+};
