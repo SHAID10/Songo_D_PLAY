@@ -1,301 +1,147 @@
-// Sélection des éléments HTML
-const boardDiv = document.getElementById("board");
-const scoreNorthElement = document.getElementById("scoreNorth");
-const scoreSouthElement = document.getElementById("scoreSouth");
-const currentPlayerElement = document.getElementById("currentPlayer");
-const message = document.getElementById("message");
+// URL de ton API PHP (à adapter selon ton adresse locale ou en ligne)
+const SERVER_URL = "api.php";
 
-/* Topologie linéaire du plateau de jeu adaptée à la distribution horaire (RADIMESE) :
-  Le tableau fait 14 cases.
-  - Indices 0 à 6  : Camp SUD (S0 à S6, de gauche à droite sur l'écran)
-  - Indices 7 à 13 : Camp NORD (N6 à N0, de droite à gauche sur l'écran pour rester face à face)
-  
-  Ordre de distribution HORAIRE (Aiguilles d'une montre) :
-  S6 -> S5 -> S4 -> S3 -> S2 -> S1 -> S0 -> N0 -> N1 -> N2 -> N3 -> N4 -> N5 -> N6 -> S6...
-  Ce qui correspond à RECULER dans les indices du tableau : (index - 1 + 14) % 14
-*/
-let board = new Array(14).fill(5); // 5 graines par case au départ (Total 70)
-
+// Configuration globale du jeu
+let playerRole = "South"; // Rôle par défaut (à changer manuellement en "North" pour tester l'autre joueur)
+let board = arrayFill(0, 14, 5); // État local du plateau (14 cases, initialisées à 5 graines)
 let currentPlayer = "South";
-let scoreNorth = 0;
 let scoreSouth = 0;
+let scoreNorth = 0;
 let gameOver = false;
 
-// Cartographie visuelle pour correspondre à une grille CSS 7x2
-// Rangée du haut (Nord) : N0, N1, N2, N3, N4, N5, N6 -> correspond aux indices [13, 12, 11, 10, 9, 8, 7]
-// Rangée du bas (Sud)   : S0, S1, S2, S3, S4, S5, S6 -> correspond aux indices [0, 1, 2, 3, 4, 5, 6]
-const visualMapping = [
-    13, 12, 11, 10, 9, 8, 7,  // Ligne Nord (indices du tableau)
-    0,  1,  2,  3,  4,  5, 6   // Ligne Sud (indices du tableau)
-];
+// Sécurisation contre l'affichage en boucle de l'alerte Reset pendant le polling
+let resetPromptActive = false;
 
+// Sélection des éléments HTML indispensables
+const boardElement = document.getElementById("board");
+const scoreSouthElement = document.getElementById("scoreSouth");
+const scoreNorthElement = document.getElementById("scoreNorth");
+const messageElement = document.getElementById("message");
+const resetBtn = document.getElementById("resetBtn");
+const roleDisplay = document.getElementById("roleDisplay");
+
+// Affichage initial du rôle affecté au navigateur
+if (roleDisplay) {
+    roleDisplay.textContent = `Votre rôle : Joueur ${playerRole === "South" ? "SUD" : "NORD"}`;
+}
+
+/**
+ * 1. FONCTION DE CORRESPONDANCE D'AFFICHAGE DU PLATEAU
+ * Dans le Songo, les cases Sud vont de 0 à 6 (de gauche à droite).
+ * Les cases Nord vont de 7 à 13 (de droite à gauche sur un vrai plateau).
+ * Pour l'affichage HTML en grid, on applique un index visuel.
+ */
+function getVisualIndex(i) {
+    if (i >= 7) {
+        // Rangée du haut (Nord) : On inverse pour que l'index 13 soit à l'extrême gauche visuelle (N0)
+        return 20 - i; 
+    }
+    // Rangée du bas (Sud) : Standard de 0 à 6
+    return i;
+}
+
+/**
+ * 2. RENDU VISUEL ET POPULATION DES CASES EN GRAINES
+ */
 function renderBoard() {
-    boardDiv.innerHTML = "";
+    boardElement.innerHTML = "";
+    
+    // Création d'un tableau ordonné visuellement pour le CSS Grid
+    let sortedIndices = [];
+    // Rangée Nord (7 à 13 inversé pour respecter le sens horaire visuel)
+    for (let i = 13; i >= 7; i--) sortedIndices.push(i);
+    // Rangée Sud (0 à 6)
+    for (let i = 0; i <= 6; i++) sortedIndices.push(i);
 
-    // On génère les cellules dans l'ordre de la grille HTML (Nord en haut, Sud en bas)
-    visualMapping.forEach(index => {
-        const isNorth = (index >= 7);
-        createCell(index, isNorth);
+    sortedIndices.forEach(i => {
+        const pit = document.createElement("div");
+        pit.className = "pit";
+        
+        // Ajout d'une classe CSS spécifique selon le camp
+        if (i >= 7) pit.classList.add("north-pit");
+        else pit.classList.add("south-pit");
+
+        // Identification textuelle de la case pour les joueurs (Ex: S4 ou N2)
+        const label = i >= 7 ? `N${13 - i}` : `S${i}`;
+        
+        pit.innerHTML = `
+            <span class="pit-label">${label}</span>
+            <div class="seeds-count">${board[i]}</div>
+        `;
+
+        // Écouteur de clic pour jouer
+        pit.onclick = () => handlePitClick(i);
+
+        boardElement.appendChild(pit);
     });
 
-    scoreNorthElement.textContent = scoreNorth;
+    // Mise à jour des scores et affichages textuels
     scoreSouthElement.textContent = scoreSouth;
-    currentPlayerElement.textContent = currentPlayer === "South" ? "Sud" : "Nord";
+    scoreNorthElement.textContent = scoreNorth;
 }
 
-function createCell(index, isNorth) {
-    const cell = document.createElement("div");
-    cell.classList.add("cell");
-    cell.classList.add(isNorth ? "north" : "south");
-    cell.textContent = board[index];
-
-    // Clic utilisateur
-    cell.onclick = () => {
-        if (gameOver) return;
-        play(index);
-    };
-
-    boardDiv.appendChild(cell);
-}
-
-// Vérifie si la case appartient au joueur actif
-function isPlayerPit(index) {
-    if (currentPlayer === "South") return index >= 0 && index <= 6;
-    return index >= 7 && index <= 13;
-}
-
-// Sens de rotation du Songo : Aiguilles d'une montre (Horaire)
-function nextPit(index) {
-    return (index - 1 + 14) % 14;
-}
-
-// Sens inverse de la distribution (servira à remonter la rafle des captures)
-function prevPit(index) {
-    return (index + 1) % 14;
-}
-
-// Compte le nombre total de graines dans un camp donné
-function countCampSeeds(player) {
-    let start = player === "South" ? 0 : 7;
-    let sum = 0;
-    for (let i = start; i < start + 7; i++) {
-        sum += board[i];
-    }
-    return sum;
-}
-
-// Trouve le nombre maximal de graines présentes dans une seule case du camp du joueur
-function getMaxSeedsInCamp(player) {
-    let start = player === "South" ? 0 : 7;
-    let max = 0;
-    for (let i = start; i < start + 7; i++) {
-        if (board[i] > max) max = board[i];
-    }
-    return max;
-}
-
-function play(index) {
-    // 1. Validation de base du coup
-    if (!isPlayerPit(index)) {
-        displayMessage("Ce n'est pas votre camp !");
-        return;
-    }
-    if (board[index] === 0) {
-        displayMessage("Cette case est vide !");
+/**
+ * 3. GESTION DES CLICS SUR LES CASES DU PLATEAU
+ */
+async function handlePitClick(pitIndex) {
+    if (gameOver) {
+        displayMessage("La partie est terminée. Veuillez recommencer.");
         return;
     }
 
-    const opponent = currentPlayer === "South" ? "North" : "South";
-    const opponentEmptyBefore = (countCampSeeds(opponent) === 0);
-
-    // 2. Règle de solidarité : si l'adversaire est affamé, on doit jouer la case contenant le max de graines
-    if (opponentEmptyBefore) {
-        const maxAvailable = getMaxSeedsInCamp(currentPlayer);
-        if (board[index] < maxAvailable) {
-            displayMessage("Règle de solidarité ! Vous devez nourrir l'adversaire en jouant votre case contenant le maximum de graines.");
-            return;
-        }
+    // Sécurité client : Vérifier que le joueur clique bien dans son propre camp
+    if (playerRole === "South" && pitIndex >= 7) {
+        displayMessage("Interdit ! Vous ne pouvez jouer que dans le camp SUD.");
+        return;
+    }
+    if (playerRole === "North" && pitIndex <= 6) {
+        displayMessage("Interdit ! Vous ne pouvez jouer que dans le camp NORD.");
+        return;
     }
 
-    // Copie de sauvegarde du plateau pour tester la validité des captures (règle anti-assèchement)
-    let tempBoard = [...board];
-    let tempScoreSouth = scoreSouth;
-    let tempScoreNorth = scoreNorth;
-
-    // Execution de la distribution sur la simulation
-    let seeds = tempBoard[index];
-    tempBoard[index] = 0;
-    let current = index;
-
-    if (seeds > 13) {
-        // --- CAS DU GRENIER / NDÀ (> 13 graines) ---
-        // 1er tour : On dépose 1 graine dans chacune des 13 autres cases du plateau
-        for (let t = 0; t < 13; t++) {
-            current = nextPit(current);
-            tempBoard[current]++;
-            seeds--;
-        }
-        // La 14ème graine (si elle existe) est capturée directement par le joueur (Automatique)
-        if (seeds === 1) {
-            if (currentPlayer === "South") tempScoreSouth++;
-            else tempScoreNorth++;
-            seeds--;
-        } else if (seeds > 1) {
-            // S'il reste plus d'une graine, distribution EXCLUSIVE dans le camp adverse
-            let oppStart = (currentPlayer === "South") ? 7 : 0;
-            // Dans le camp adverse, le sens horaire implique de parcourir les indices du tableau différemment
-            // Pour le Sud qui distribue chez le Nord : N0(13)->N1(12)->N2(11)->N3(10)->N4(9)->N5(8)->N6(7)
-            // Pour le Nord qui distribue chez le Sud : S6(6)->S5(5)->S4(4)->S3(3)->S2(2)->S1(1)->S0(0)
-            let oppOrder = (currentPlayer === "South") 
-                ? [13, 12, 11, 10, 9, 8, 7] 
-                : [6, 5, 4, 3, 2, 1, 0];
-                
-            let oppIdx = 0;
-            while (seeds > 0) {
-                let targetPit = oppOrder[oppIdx % 7];
-                tempBoard[targetPit]++;
-                current = targetPit; // La dernière case reçue met à jour l'arrivée
-                seeds--;
-                oppIdx++;
-            }
-        }
-    } else {
-        // --- DISTRIBUTION STANDARD ---
-        while (seeds > 0) {
-            current = nextPit(current);
-            tempBoard[current]++;
-            seeds--;
-        }
+    // Sécurité client : Vérifier que c'est bien son tour de jouer
+    if (playerRole !== currentPlayer) {
+        displayMessage("Veuillez patienter, c'est au tour de votre adversaire.");
+        return;
     }
 
-    // Calcul des captures potentielles sur la simulation
-    let capturedSeeds = 0;
-    let checkPit = current;
-    let isOpponentPit = (currentPlayer === "South") ? (checkPit >= 7) : (checkPit <= 6);
-
-    // On ne récolte que si l'on finit chez l'adversaire
-    if (isOpponentPit) {
-        while (isOpponentPit) {
-            // Interdiction de capturer sur les extrémités (S6 pour Nord, N0 pour Sud)
-            if (currentPlayer === "South" && checkPit === 13) break; // N0 est l'indice 13
-            if (currentPlayer === "North" && checkPit === 6) break;  // S6 est l'indice 6
-
-            // La condition de récolte : la case doit contenir 2, 3 ou 4 graines APRÈS dépôt
-            if (tempBoard[checkPit] >= 2 && tempBoard[checkPit] <= 4) {
-                capturedSeeds += tempBoard[checkPit];
-                tempBoard[checkPit] = 0;
-                // On remonte la rafle dans le sens inverse de la distribution
-                checkPit = prevPit(checkPit);
-                isOpponentPit = (currentPlayer === "South") ? (checkPit >= 7) : (checkPit <= 6);
-            } else {
-                break; // Interruption immédiate de la rafle dès qu'une case ne valide pas les critères
-            }
-        }
+    // Sécurité client : Vérifier que la case cliquée n'est pas vide
+    if (board[pitIndex] === 0) {
+        displayMessage("Cette case est vide ! Choisissez une autre case.");
+        return;
     }
 
-    // 3. Validation de la règle d'assèchement
-    // On calcule la quantité restante chez l'adversaire après capture potentielle
-    let oppStart = (currentPlayer === "South") ? 7 : 0;
-    let oppRemaining = 0;
-    for (let i = oppStart; i < oppStart + 7; i++) {
-        oppRemaining += tempBoard[i];
-    }
+    // Envoi du coup au serveur PHP
+    try {
+        const response = await fetch(SERVER_URL, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+                player: playerRole,
+                pitIndex: pitIndex
+            })
+        });
 
-    // Si le coup laisse l'adversaire sans aucune graine, la capture est annulée (Interdit d'assécher)
-    if (oppRemaining === 0 && capturedSeeds > 0) {
-        displayMessage("Coup interdit : Vous ne pouvez pas assécher l'adversaire ! (Capture annulée)");
-        // On applique le coup MAIS sans récolter les graines (elles restent sur le plateau)
-        // On doit donc recalculer la distribution sans la phase de mise à zéro des cases capturées
-        executeMove(index, false); 
-    } else {
-        // Le coup et ses captures sont totalement valides, on applique l'état simulé
-        board = tempBoard;
-        if (currentPlayer === "South") scoreSouth += capturedSeeds;
-        else scoreNorth += scoreNorth += capturedSeeds;
-        displayMessage(capturedSeeds > 0 ? `Récolte réussie : +${capturedSeeds} graines !` : "");
-        
-        // Si le coup a consommé un grenier à exactement 14 graines, la capture bonus est déjà incluse
-        if(board[index] > 13 && (board[index] - 13 === 1)) {
-             if (currentPlayer === "South") scoreSouth += 1;
-             else scoreNorth += 1;
+        if (response.ok) {
+            const data = await response.json();
+            updateState(data);
+        } else {
+            const errorData = await response.json();
+            displayMessage(errorData.error || "Erreur lors de l'exécution du coup.");
         }
-    }
-
-    // Fin du tour : changement de joueur et vérification de victoire
-    switchPlayer();
-    renderBoard();
-    checkWinner();
-}
-
-// Permet d'exécuter un coup classique sans captures (utilisé en cas d'annulation anti-assèchement)
-function executeMove(index, allowCapture) {
-    let seeds = board[index];
-    board[index] = 0;
-    let current = index;
-
-    if (seeds > 13) {
-        for (let t = 0; t < 13; t++) {
-            current = nextPit(current);
-            board[current]++;
-            seeds--;
-        }
-        if (seeds === 1) {
-            if (currentPlayer === "South") scoreSouth++;
-            else scoreNorth++;
-            seeds--;
-        } else if (seeds > 1) {
-            let oppOrder = (currentPlayer === "South") ? [13, 12, 11, 10, 9, 8, 7] : [6, 5, 4, 3, 2, 1, 0];
-            let oppIdx = 0;
-            while (seeds > 0) {
-                board[oppOrder[oppIdx % 7]]++;
-                seeds--;
-                oppIdx++;
-            }
-        }
-    } else {
-        while (seeds > 0) {
-            current = nextPit(current);
-            board[current]++;
-            seeds--;
-        }
+    } catch (error) {
+        displayMessage("Impossible de communiquer avec le serveur de jeu.");
     }
 }
 
-function switchPlayer() {
-    currentPlayer = (currentPlayer === "South") ? "North" : "South";
-}
+/**
+ * 4. SYSTEME DE RESET PAR CONSENSUS : ENVOI ET RÉPONSES
+ */
 
-function displayMessage(txt) {
-    message.textContent = txt;
-}
-
-function checkWinner() {
-    // Le jeu s'arrête dès qu'un joueur atteint ou dépasse le seuil fatidique de 40 graines capturées
-    if (scoreSouth >= 40) {
-        displayMessage("Victoire ! Le joueur SUD gagne la partie avec " + scoreSouth + " graines !");
-        gameOver = true;
-    } else if (scoreNorth >= 40) {
-        displayMessage("Victoire ! Le joueur NORD gagne la partie avec " + scoreNorth + " graines !");
-        gameOver = true;
-    } else {
-        // Optionnel : Fin de partie si aucun joueur ne peut plus nourrir l'autre (blocage total)
-        if (countCampSeeds("South") === 0 && countCampSeeds("North") === 0) {
-            displayMessage("Match nul ! Plus aucune graine disponible sur le plateau.");
-            gameOver = true;
-        }
-    }
-}
-
-
-// Initialisation au chargement du script
-renderBoard();
-const resetBtn = document.getElementById("resetBtn");
-let resetPromptActive = false; // Pour éviter d'afficher l'alerte en boucle à chaque polling
-
-// 1. LE DEMANDEUR CLIQUE SUR LE BOUTON
+// Action lorsque le joueur clique sur le bouton "Recommencer la partie"
 resetBtn.onclick = async () => {
     try {
-        displayMessage("Demande de réinitialisation envoyée à l'adversaire...");
+        displayMessage("Demande de réinitialisation envoyée... En attente de l'adversaire.");
         const response = await fetch(SERVER_URL, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -306,11 +152,11 @@ resetBtn.onclick = async () => {
             updateState(data);
         }
     } catch (error) {
-        displayMessage("Erreur de connexion.");
+        displayMessage("Erreur réseau lors de la demande de recommencer.");
     }
 };
 
-// 2. GESTION DES RÉPONSES AUX DEMANDES (ACCEPTATION / REFUS)
+// Fonction générique pour traiter les actions de reset (acceptation, refus, nettoyage)
 async function sendResetResponse(action) {
     try {
         const response = await fetch(SERVER_URL, {
@@ -323,46 +169,89 @@ async function sendResetResponse(action) {
             updateState(data);
         }
     } catch (error) {
-        console.error(error);
+        console.error("Erreur lors de la réponse au reset:", error);
     }
 }
 
-// 3. MISE À JOUR DE L'ÉTAT DU JEU (Modifiée pour écouter le Reset)
+/**
+ * 5. SYNCHRONISATION GENERALE ET TRAITEMENT DES DONNEES REÇUES
+ */
 function updateState(data) {
+    // Rapatriement des données brutes de jeu
     board = data.board;
     scoreSouth = data.scoreSouth;
     scoreNorth = data.scoreNorth;
     currentPlayer = data.currentPlayer;
     gameOver = data.gameOver;
 
-    if (data.message) displayMessage(data.message);
+    if (data.message) {
+        displayMessage(data.message);
+    }
 
-    // ANALYSE DU STATUT DE RECONVERSION DU SERVEUR
+    // INTERCEPTION DE LA LOGIQUE DU CONSENSUS DE RECONVERSION
     if (data.resetStatus) {
         const reqBy = data.resetStatus.requestedBy;
         const status = data.resetStatus.status;
 
-        // Cas où c'est l'ADVERSAIRE qui demande et que c'est en attente (pending)
+        // ÉTAPE A : L'ADVERSAIRE a demandé à recommencer et la requête est en attente (pending)
         if (reqBy !== playerRole && status === "pending" && !resetPromptActive) {
-            resetPromptActive = true; // On bloque les autres alertes
-            setTimeout(() => { // Un court délai pour laisser l'interface respirer
-                let accept = confirm("Ton adversaire demande de recommencer la partie ! \n\n[Ok] pour Accepter\n[Annuler] pour Refuser");
+            resetPromptActive = true; // On verrouille pour éviter les boîtes de dialogue multiples à chaque polling
+            
+            setTimeout(() => {
+                let campDemandeur = (reqBy === "South") ? "SUD" : "NORD";
+                let accept = confirm(`Ton adversaire (Joueur ${campDemandeur}) demande de recommencer la partie !\n\n[Ok] pour Accepter (le jeu se remet à zéro)\n[Annuler] pour Refuser (la partie continue)`);
+                
                 if (accept) {
                     sendResetResponse("accept_reset");
                 } else {
                     sendResetResponse("refuse_reset");
                 }
-                resetPromptActive = false;
+                resetPromptActive = false; // Déverrouillage après décision
             }, 100);
         }
 
-        // Cas où le demandeur voit que l'autre a REFUSÉ
+        // ÉTAPE B : Le DEMANDEUR d'origine reçoit l'info que l'adversaire a REFUSÉ
         if (reqBy === playerRole && status === "refused") {
-            alert("Ton adversaire a refusé de recommencer la partie !");
-            // On demande au serveur de nettoyer le statut de refus pour pouvoir rejouer ou redemander plus tard
+            alert("Ton adversaire a refusé de recommencer la partie ! Le match continue.");
+            // On demande immédiatement au serveur d'effacer le drapeau "refused" pour nettoyer le fichier JSON
             sendResetResponse("clear_refusal");
         }
     }
 
     renderBoard();
 }
+
+/**
+ * 6. REQUÊTES AUTOMATIQUES (AJAX POLLING TOUTES LES 2 SECONDES)
+ */
+async function checkServerUpdate() {
+    // Si l'utilisateur est en train de répondre au confirm(), on suspend momentanément le polling
+    if (resetPromptActive) return;
+
+    try {
+        const response = await fetch(SERVER_URL);
+        if (response.ok) {
+            const data = await response.json();
+            updateState(data);
+        }
+    } catch (error) {
+        console.warn("Erreur de synchronisation avec le serveur.");
+    }
+}
+
+// Lancement du polling cyclique toutes les 2000 millisecondes (2 secondes)
+setInterval(checkServerUpdate, 2000);
+
+// Utilitaires secondaires
+function displayMessage(msg) {
+    if (messageElement) messageElement.textContent = msg;
+}
+
+function arrayFill(start, length, value) {
+    let arr = [];
+    for (let i = 0; i < length; i++) arr.push(value);
+    return arr;
+}
+
+// Premier affichage forcé au chargement de la page
+checkServerUpdate();
