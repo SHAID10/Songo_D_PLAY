@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Songo</title>
+
+<link rel="stylesheet" href="style.css">
+</head>
+
+<body>
+
+<h1>SONGO_D_PLAY</h1>
+
+<div class="infos">
+
+<div class="score">
+<h2>Nord</h2>
+<p id="scoreNorth">0</p>
+</div>
+
+<div class="turn">
+Tour :
+<span id="currentPlayer">Sud</span>
+</div>
+
+<div class="score">
+<h2>Sud</h2>
+<p id="scoreSouth">0</p>
+</div>
+
+</div>
+
+<div id="board" class="board"></div>
+
+<p id="message"></p>
+<button id="resetBtn">Recommencer la partie</button>
+
+<script src="game.js"></script>
+
+</body>
+</html>
