@@ -10,9 +10,6 @@ const message = document.getElementById("message");
   - Indices 0 à 6  : Camp SUD (S0 à S6, de gauche à droite sur l'écran)
   - Indices 7 à 13 : Camp NORD (N6 à N0, de droite à gauche sur l'écran pour rester face à face)
   
-  Ordre de distribution HORAIRE (Aiguilles d'une montre) :
-  S6 -> S5 -> S4 -> S3 -> S2 -> S1 -> S0 -> N0 -> N1 -> N2 -> N3 -> N4 -> N5 -> N6 -> S6...
-  Ce qui correspond à RECULER dans les indices du tableau : (index - 1 + 14) % 14
 */
 let board = new Array(14).fill(5); // 5 graines par case au départ (Total 70)
 
